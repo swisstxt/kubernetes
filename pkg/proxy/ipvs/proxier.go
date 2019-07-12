@@ -231,18 +231,19 @@ type Proxier struct {
 	// Values are CIDR's to exclude when cleaning up IPVS rules.
 	excludeCIDRs []*net.IPNet
 	// Set to true to set sysctls arp_ignore and arp_announce
-	strictARP      bool
-	iptables       utiliptables.Interface
-	ipvs           utilipvs.Interface
-	ipset          utilipset.Interface
-	exec           utilexec.Interface
-	masqueradeAll  bool
-	masqueradeMark string
-	localDetector  proxyutiliptables.LocalTrafficDetector
-	hostname       string
-	nodeIP         net.IP
-	portMapper     utilproxy.PortOpener
-	recorder       record.EventRecorder
+	strictARP      	  bool
+	excludeExternalIP bool
+	iptables          utiliptables.Interface
+	ipvs              utilipvs.Interface
+	ipset             utilipset.Interface
+	exec              utilexec.Interface
+	masqueradeAll     bool
+	masqueradeMark    string
+	localDetector     proxyutiliptables.LocalTrafficDetector
+	hostname          string
+	nodeIP            net.IP
+	portMapper        utilproxy.PortOpener
+	recorder          record.EventRecorder
 
 	serviceHealthServer healthcheck.ServiceHealthServer
 	healthzServer       healthcheck.ProxierHealthUpdater
@@ -346,6 +347,7 @@ func NewProxier(ipt utiliptables.Interface,
 	minSyncPeriod time.Duration,
 	excludeCIDRs []string,
 	strictARP bool,
+	excludeExternalIP bool,
 	tcpTimeout time.Duration,
 	tcpFinTimeout time.Duration,
 	udpTimeout time.Duration,
@@ -465,6 +467,7 @@ func NewProxier(ipt utiliptables.Interface,
 		syncPeriod:            syncPeriod,
 		minSyncPeriod:         minSyncPeriod,
 		excludeCIDRs:          parseExcludedCIDRs(excludeCIDRs),
+		excludeExternalIP:     excludeExternalIP,
 		iptables:              ipt,
 		masqueradeAll:         masqueradeAll,
 		masqueradeMark:        masqueradeMark,
@@ -515,6 +518,7 @@ func NewDualStackProxier(
 	minSyncPeriod time.Duration,
 	excludeCIDRs []string,
 	strictARP bool,
+	excludeExternalIP bool,
 	tcpTimeout time.Duration,
 	tcpFinTimeout time.Duration,
 	udpTimeout time.Duration,
@@ -537,8 +541,8 @@ func NewDualStackProxier(
 	// Create an ipv4 instance of the single-stack proxier
 	ipv4Proxier, err := NewProxier(ipt[0], ipvs, safeIpset, sysctl,
 		exec, syncPeriod, minSyncPeriod, filterCIDRs(false, excludeCIDRs), strictARP,
-		tcpTimeout, tcpFinTimeout, udpTimeout, masqueradeAll, masqueradeBit,
-		localDetectors[0], hostname, nodeIP[0],
+		excludeExternalIP, tcpTimeout, tcpFinTimeout, udpTimeout, masqueradeAll,
+		masqueradeBit, localDetectors[0], hostname, nodeIP[0],
 		recorder, healthzServer, scheduler, nodePortAddresses4, kernelHandler)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ipv4 proxier: %v", err)
@@ -546,8 +550,8 @@ func NewDualStackProxier(
 
 	ipv6Proxier, err := NewProxier(ipt[1], ipvs, safeIpset, sysctl,
 		exec, syncPeriod, minSyncPeriod, filterCIDRs(true, excludeCIDRs), strictARP,
-		tcpTimeout, tcpFinTimeout, udpTimeout, masqueradeAll, masqueradeBit,
-		localDetectors[1], hostname, nodeIP[1],
+		excludeExternalIP, tcpTimeout, tcpFinTimeout, udpTimeout, masqueradeAll,
+		masqueradeBit, localDetectors[1], hostname, nodeIP[1],
 		nil, nil, scheduler, nodePortAddresses6, kernelHandler)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ipv6 proxier: %v", err)
@@ -1308,6 +1312,9 @@ func (proxier *Proxier) syncProxyRules() {
 			}
 
 			// ipvs call
+			if proxier.excludeExternalIP {
+				continue
+			}
 			serv := &utilipvs.VirtualServer{
 				Address:   net.ParseIP(externalIP),
 				Port:      uint16(svcInfo.Port()),
@@ -1411,6 +1418,9 @@ func (proxier *Proxier) syncProxyRules() {
 				}
 
 				// ipvs call
+				if proxier.excludeExternalIP {
+					continue
+				}
 				serv := &utilipvs.VirtualServer{
 					Address:   net.ParseIP(ingress),
 					Port:      uint16(svcInfo.Port()),
